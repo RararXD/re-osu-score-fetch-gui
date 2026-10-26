@@ -157,9 +157,15 @@ export default function App() {
       <main>
         <section className="hero-copy">
           <h1>
-            {t("heroBefore")} <span className="osu-beat">osu!</span> {t("heroAfter")}
+            <span className="hero-line">
+              {t("heroBefore")} <span className="osu-beat">osu!</span> {t("heroAfterFirst")}
+            </span>
+            <span className="hero-line">{t("heroAfterSecond")}</span>
           </h1>
-          <p>{t("heroDetail")}</p>
+          <p>
+            <span className="hero-detail-line">{t("heroDetailFirst")}</span>
+            <span className="hero-detail-line">{t("heroDetailSecond")}</span>
+          </p>
         </section>
 
         <SearchPanel
@@ -223,13 +229,23 @@ export default function App() {
             </div>
           ) : (
             <div className="empty-state">
-              <div className="empty-rhythm" aria-hidden="true">
-                <span />
-                <span />
-                <span />
+              <div className="empty-state-copy">
+                <h2>{t("emptyTitle")}</h2>
+                <p>{t("emptyDetail")}</p>
               </div>
-              <h2>{t("emptyTitle")}</h2>
-              <p>{t("emptyDetail")}</p>
+              <div className="empty-readout" aria-hidden="true">
+                <div className="empty-range">
+                  <strong>B20</strong>
+                  <span />
+                  <strong>B50</strong>
+                </div>
+                <div className="empty-modes">
+                  <span>osu!</span>
+                  <span>taiko</span>
+                  <span>catch</span>
+                  <span>mania</span>
+                </div>
+              </div>
             </div>
           )}
         </section>
