@@ -1,0 +1,55 @@
+{
+  "name": "raru-score",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "XDG_CONFIG_HOME=.wrangler/config WRANGLER_LOG_PATH=.wrangler/logs/dev.log vite",
+    "build": "tsc -b && XDG_CONFIG_HOME=.wrangler/config WRANGLER_LOG_PATH=.wrangler/logs/build.log vite build",
+    "preview": "vite preview",
+    "deploy": "npm run build && wrangler deploy",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "WRANGLER_LOG_PATH=.wrangler/logs/test.log vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fontsource/space-mono": "5.3.0",
+    "@fontsource-variable/dm-sans": "5.3.0",
+    "@heroui/react": "3.2.6",
+    "@heroui/styles": "3.2.6",
+    "@hono/zod-validator": "0.9.1",
+    "@tanstack/react-query": "5.105.0",
+    "hono": "4.13.14",
+    "lucide-react": "1.61.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.3",
+    "@cloudflare/vite-plugin": "1.65.0",
+    "@cloudflare/vitest-plugin": "1.4.7",
+    "@cloudflare/workers-types": "5.20261026.1",
+    "@playwright/test": "1.64.1",
+    "@tailwindcss/vite": "4.3.3",
+    "@testing-library/react": "16.3.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "jsdom": "30.1.3",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "4.1.12",
+    "wrangler": "4.152.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "overrides": {
+    "undici": "7.30.1",
+    "zod": "4.6.7"
+  }
+}
