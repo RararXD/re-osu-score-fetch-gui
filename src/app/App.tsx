@@ -1,8 +1,17 @@
 import { Button } from "@heroui/react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, Languages, RefreshCw, Trophy } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  ArrowUpRight,
+  Clock3,
+  Languages,
+  LoaderCircle,
+  RefreshCw,
+  Search,
+  Trophy,
+} from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { QueryMode } from "../../shared/contracts";
+import { normalizePlayer } from "../../shared/player";
 import RhythmField from "../components/RhythmField";
 import ExportButton from "../features/export/ExportButton";
 import PlayerSummary from "../features/scores/PlayerSummary";
@@ -11,6 +20,7 @@ import ScoreList from "../features/scores/ScoreList";
 import SearchPanel, { type RecentPlayer } from "../features/search/SearchPanel";
 import { detectLanguage, type Language, type MessageKey, translate } from "../i18n";
 import { ApiError, fetchScores } from "../lib/api";
+import { useContentTransition } from "../lib/use-content-transition";
 
 const RECENT_KEY = "raru-recent-players-v2";
 
@@ -40,6 +50,8 @@ export default function App() {
   const [mode, setMode] = useState<QueryMode>("auto");
   const [limit, setLimit] = useState<20 | 50>(20);
   const [recent, setRecent] = useState<RecentPlayer[]>(readRecent);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [now, setNow] = useState(Date.now);
   const searchInput = useRef<HTMLInputElement>(null);
   const t = useMemo(
     () => (key: MessageKey, values?: Record<string, string | number>) =>
@@ -48,15 +60,45 @@ export default function App() {
   );
 
   const query = useQuery({
-    queryKey: ["scores", submittedPlayer, mode, limit],
-    queryFn: ({ signal }) => fetchScores(submittedPlayer, mode, limit, signal),
+    queryKey: ["scores", submittedPlayer, mode],
+    queryFn: ({ signal }) => fetchScores(submittedPlayer, mode, 50, signal),
     enabled: Boolean(submittedPlayer),
-    placeholderData: keepPreviousData,
-    retry: (failureCount, error) =>
-      error instanceof ApiError && error.code === "UPSTREAM_BUSY" && failureCount < 3,
-    retryDelay: (_attempt, error) =>
-      error instanceof ApiError ? Math.min(30_000, error.retryAfter * 1000) : 1000,
+    retry: false,
+    refetchOnReconnect: false,
+    staleTime: (current) => {
+      const refreshAt = current.state.data?.refreshAt;
+      return refreshAt == null ? 0 : Math.max(0, refreshAt - current.state.dataUpdatedAt);
+    },
   });
+
+  useEffect(() => {
+    const error = query.error;
+    if (
+      error instanceof ApiError &&
+      (error.code === "RATE_LIMITED" || error.code === "UPSTREAM_BUSY")
+    ) {
+      setCooldownUntil((current) => Math.max(current, error.retryAt));
+      setNow(Date.now());
+    }
+  }, [query.error]);
+
+  useEffect(() => {
+    if (cooldownUntil <= Date.now()) return;
+    const timer = window.setInterval(() => {
+      const time = Date.now();
+      setNow(time);
+      if (time >= cooldownUntil) window.clearInterval(timer);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [cooldownUntil]);
+
+  const cooldownSeconds = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
+  const searchBlocked = query.isFetching || cooldownSeconds > 0;
+
+  const result = useMemo(() => {
+    const data = query.data?.data;
+    return data ? { ...data, scores: data.scores.slice(0, limit) } : undefined;
+  }, [query.data, limit]);
 
   useEffect(() => {
     document.documentElement.lang = language;
@@ -79,11 +121,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const player = query.data?.data.player;
-    if (!player) return;
+    const data = query.data?.data;
+    if (!data) return;
+    const player = data.player;
     setRecent((current) => {
       const next = [
-        { id: player.userId, username: player.username, mode },
+        { id: player.userId, username: player.username, mode: data.mode },
         ...current.filter((item) => item.id !== player.userId),
       ].slice(0, 5);
       try {
@@ -93,22 +136,37 @@ export default function App() {
       }
       return next;
     });
-  }, [query.data?.data.player, mode]);
+  }, [query.data]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const player = input.trim();
+    if (searchBlocked) return;
+    const player = normalizePlayer(input);
     if (!player) {
       searchInput.current?.focus();
       return;
     }
-    setSubmittedPlayer(player);
+    if (player === submittedPlayer) {
+      if (!query.data?.refreshAt || query.data.refreshAt <= Date.now() || query.isError) {
+        void query.refetch();
+      }
+    } else {
+      setSubmittedPlayer(player);
+    }
   }
 
   function chooseRecent(player: RecentPlayer) {
+    if (searchBlocked) return;
     setInput(player.username);
     setMode(player.mode);
-    setSubmittedPlayer(player.username);
+    const normalized = normalizePlayer(player.username);
+    if (normalized === submittedPlayer && player.mode === mode) {
+      if (!query.data?.refreshAt || query.data.refreshAt <= Date.now() || query.isError) {
+        void query.refetch();
+      }
+    } else {
+      setSubmittedPlayer(normalized);
+    }
   }
 
   function clearRecent() {
@@ -123,7 +181,20 @@ export default function App() {
   const errorCode = query.error instanceof ApiError ? query.error.code : "unknownError";
   const errorMessage =
     errorCode in errorKeys ? t(errorKeys[errorCode as keyof typeof errorKeys]) : t("unknownError");
-  const result = query.data?.data;
+  const view =
+    query.isPending && submittedPlayer
+      ? "loading"
+      : query.isError
+        ? "error"
+        : result
+          ? "results"
+          : "empty";
+  const resultMotion = useContentTransition<HTMLElement>(
+    view === "results"
+      ? `${view}:${submittedPlayer}:${mode}:${limit}:${query.dataUpdatedAt}`
+      : view,
+  );
+  const languageMotion = useContentTransition<HTMLElement>(language);
 
   return (
     <div className="app-shell">
@@ -154,7 +225,7 @@ export default function App() {
         </nav>
       </header>
 
-      <main>
+      <main ref={languageMotion}>
         <section className="hero-copy">
           <h1>
             <span className="hero-line">
@@ -171,39 +242,62 @@ export default function App() {
         <SearchPanel
           ref={searchInput}
           input={input}
-          language={language}
           limit={limit}
           loading={query.isFetching}
+          cooldownSeconds={cooldownSeconds}
           mode={mode}
           recent={recent}
           t={t}
           onClearRecent={clearRecent}
           onInput={setInput}
           onLimit={setLimit}
-          onMode={setMode}
+          onMode={(next) => {
+            if (!searchBlocked) setMode(next);
+          }}
           onRecent={chooseRecent}
           onSubmit={submit}
         />
 
-        <section className="result-stage" aria-live="polite">
+        <section
+          ref={resultMotion}
+          className="result-stage"
+          data-view={view}
+          aria-live="polite"
+          aria-busy={query.isFetching}
+        >
           {query.isPending && submittedPlayer ? (
             <LoadingState label={t("loading")} />
           ) : query.isError ? (
             <div className="error-state" role="alert">
-              <span className="error-shape" aria-hidden="true" />
-              <p>{errorMessage}</p>
-              <Button variant="outline" onPress={() => query.refetch()}>
+              <Clock3 size={24} aria-hidden="true" />
+              <div className="error-copy">
+                <p>{errorMessage}</p>
+                <span>
+                  {cooldownSeconds > 0
+                    ? t("retryIn", { seconds: cooldownSeconds })
+                    : t("retryReady")}
+                </span>
+              </div>
+              <Button
+                isDisabled={searchBlocked}
+                variant="outline"
+                onPress={() => {
+                  if (!searchBlocked) void query.refetch();
+                }}
+              >
                 <RefreshCw size={16} aria-hidden="true" />
                 {t("retry")}
               </Button>
             </div>
           ) : result ? (
-            <div className={query.isPlaceholderData ? "results results-updating" : "results"}>
+            <div className="results" aria-busy={query.isFetching}>
               <PlayerSummary mode={result.mode} player={result.player} t={t} />
               <div className="results-heading">
                 <div>
                   <Trophy size={19} aria-hidden="true" />
-                  <h2>{t("results")}</h2>
+                  <h2>
+                    {t("results")} <em>B{limit}</em>
+                  </h2>
                   <span>{t("scoresCount", { count: result.scores.length })}</span>
                 </div>
                 <ExportButton data={result} language={language} limit={limit} t={t} />
@@ -211,6 +305,11 @@ export default function App() {
               <ResultFreshness
                 cache={query.data?.cache ?? "UNKNOWN"}
                 refreshAt={query.data?.refreshAt ?? null}
+                loading={query.isFetching}
+                disabled={searchBlocked}
+                onRefresh={() => {
+                  if (!searchBlocked) void query.refetch();
+                }}
                 t={t}
               />
               {result.scores.length > 0 ? (
@@ -230,6 +329,7 @@ export default function App() {
           ) : (
             <div className="empty-state">
               <div className="empty-state-copy">
+                <Search size={22} className="empty-icon" aria-hidden="true" />
                 <h2>{t("emptyTitle")}</h2>
                 <p>{t("emptyDetail")}</p>
               </div>
@@ -280,10 +380,29 @@ function LoadingState({ label }: { label: string }) {
   const rows = ["first", "second", "third", "fourth"];
 
   return (
-    <div className="loading-state" role="status" aria-label={label}>
-      <div className="loading-player shimmer" />
+    <div className="loading-state" role="status">
+      <div className="loading-caption">
+        <LoaderCircle className="spin" size={17} aria-hidden="true" />
+        <span>{label}</span>
+      </div>
+      <div className="loading-player shimmer" aria-hidden="true">
+        <span className="loading-avatar" />
+        <span className="loading-lines">
+          <i />
+          <i />
+        </span>
+        <span className="loading-stat" />
+        <span className="loading-stat" />
+      </div>
       {rows.map((row) => (
-        <div className="loading-row shimmer" key={row} />
+        <div className="loading-row shimmer" key={row} aria-hidden="true">
+          <span className="loading-cover" />
+          <span className="loading-lines">
+            <i />
+            <i />
+          </span>
+          <span className="loading-value" />
+        </div>
       ))}
     </div>
   );

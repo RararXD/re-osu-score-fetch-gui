@@ -37,6 +37,14 @@ app.get("/health", (c) =>
 
 app.get(
   "/api/v1/scores",
+  async (c, next) => {
+    const ip = c.req.header("CF-Connecting-IP") ?? "local-development";
+    const result = await c.env.IP_RATE_LIMITER.limit({ key: ip });
+    if (!result.success) {
+      throw new ApiError(429, "RATE_LIMITED", "查询过于频繁，请稍后重试。", 60);
+    }
+    await next();
+  },
   zValidator("query", scoreQuerySchema, (result, c) => {
     if (!result.success) {
       return c.json(
@@ -52,16 +60,6 @@ app.get(
   }),
   async (c) => {
     const query = c.req.valid("query");
-    const ip = c.req.header("CF-Connecting-IP") ?? "local-development";
-    const playerKey = normalizePlayer(query.player);
-    const [ipLimit, playerLimit] = await Promise.all([
-      c.env.IP_RATE_LIMITER.limit({ key: ip }),
-      c.env.PLAYER_RATE_LIMITER.limit({ key: playerKey }),
-    ]);
-    if (!ipLimit.success || !playerLimit.success) {
-      throw new ApiError(429, "RATE_LIMITED", "查询过于频繁，请稍后重试。", 60);
-    }
-
     try {
       const cached = await readScoreCache(c.env.SCORE_CACHE, query);
       if (cached) {
@@ -83,6 +81,13 @@ app.get(
           error: error instanceof Error ? error.name : "UnknownError",
         }),
       );
+    }
+
+    const playerLimit = await c.env.PLAYER_RATE_LIMITER.limit({
+      key: normalizePlayer(query.player),
+    });
+    if (!playerLimit.success) {
+      throw new ApiError(429, "RATE_LIMITED", "该玩家的查询过于频繁，请稍后重试。", 60);
     }
 
     const gateway = c.env.OSU_GATEWAY.get(c.env.OSU_GATEWAY.idFromName("global"));

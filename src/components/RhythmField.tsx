@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 const randomBetween = (minimum: number, maximum: number) =>
   minimum + Math.random() * (maximum - minimum);
@@ -102,8 +102,30 @@ function Spark() {
 }
 
 export default function RhythmField() {
+  const field = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = field.current;
+    if (!container) return;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        (entry.target as HTMLElement).dataset.offscreen = String(!entry.isIntersecting);
+      }
+    });
+    for (const spark of container.children) observer.observe(spark);
+    const onVisibility = () => {
+      container.dataset.paused = String(document.hidden);
+    };
+    onVisibility();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
   return (
-    <div className="rhythm-field" aria-hidden="true">
+    <div ref={field} className="rhythm-field" aria-hidden="true">
       {sparkIds.map((id) => (
         <Spark key={id} />
       ))}

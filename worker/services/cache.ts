@@ -1,12 +1,10 @@
 import type { ScoreCacheEntry, ScoreQuery, ScoresResponse } from "../../shared/contracts";
+import { normalizePlayer } from "../../shared/player";
+
+export { normalizePlayer } from "../../shared/player";
 
 export const SCORE_CACHE_TTL_SECONDS = 180;
 export const NOT_FOUND_CACHE_TTL_SECONDS = 60;
-
-export function normalizePlayer(player: string): string {
-  const normalized = player.trim().toLocaleLowerCase("en-US");
-  return /^\d+$/u.test(normalized) ? normalized.replace(/^0+(?=\d)/u, "") : normalized;
-}
 
 export function scoreCacheKey(query: Pick<ScoreQuery, "player" | "mode">): string {
   return `scores:v1:${query.mode}:${normalizePlayer(query.player)}`;

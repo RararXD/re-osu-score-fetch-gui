@@ -60,4 +60,12 @@ describe("CredentialPool", () => {
       ),
     ).toThrow("OAuth Client IDs must be unique");
   });
+
+  it("does not offer a retry before both cooldown and capacity recover", () => {
+    const pool = new CredentialPool(1, 3);
+    pool.reserve(3, 1000);
+    pool.markCooldown(0, 10_000);
+    expect(pool.reserve(2, 2000)).toEqual({ ok: false, retryAfter: 59 });
+    expect(pool.reserve(2, 61_000)).toEqual({ ok: true, slot: 0 });
+  });
 });

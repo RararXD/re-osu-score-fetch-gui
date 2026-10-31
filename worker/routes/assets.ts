@@ -7,6 +7,14 @@ const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 export const assetRoutes = new Hono<{ Bindings: Env }>()
+  .use("*", async (c, next) => {
+    const ip = c.req.header("CF-Connecting-IP") ?? "local-development";
+    const result = await c.env.ASSET_IP_RATE_LIMITER.limit({ key: ip });
+    if (!result.success) {
+      throw new ApiError(429, "RATE_LIMITED", "图片请求过于频繁，请稍后重试。", 60);
+    }
+    await next();
+  })
   .get("/avatar/:userId", async (c) => {
     const userId = positiveInteger(c.req.param("userId"));
     return proxyImage(c, `https://a.ppy.sh/${userId}`, 86_400);
@@ -33,12 +41,19 @@ async function proxyImage(
   maxAge: number,
 ): Promise<Response> {
   const cache = await caches.open("raru-images-v1");
-  const cacheKey = new Request(c.req.url, { method: "GET" });
+  const cacheUrl = new URL(c.req.url);
+  cacheUrl.search = "";
+  const cacheKey = new Request(cacheUrl, { method: "GET" });
   const cached = await cache.match(cacheKey);
   if (cached) {
     const response = new Response(cached.body, cached);
     response.headers.set("X-Cache", "HIT");
     return response;
+  }
+
+  const allowance = await c.env.ASSET_UPSTREAM_RATE_LIMITER.limit({ key: "images" });
+  if (!allowance.success) {
+    throw new ApiError(429, "RATE_LIMITED", "图片服务繁忙，请稍后重试。", 60);
   }
 
   const upstream = await fetch(upstreamUrl, {

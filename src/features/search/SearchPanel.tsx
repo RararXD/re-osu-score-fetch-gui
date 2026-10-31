@@ -4,12 +4,14 @@ import {
   Cherry,
   CircleDot,
   Disc3,
+  LoaderCircle,
   Search,
+  ShieldCheck,
   UserRound,
 } from "lucide-react";
 import { type FormEvent, forwardRef } from "react";
 import type { QueryMode } from "../../../shared/contracts";
-import type { Language, MessageKey } from "../../i18n";
+import type { MessageKey } from "../../i18n";
 
 export interface RecentPlayer {
   id: number;
@@ -18,11 +20,11 @@ export interface RecentPlayer {
 }
 
 interface SearchPanelProps {
-  language: Language;
   input: string;
   mode: QueryMode;
   limit: 20 | 50;
   loading: boolean;
+  cooldownSeconds: number;
   recent: RecentPlayer[];
   t: (key: MessageKey, values?: Record<string, string | number>) => string;
   onInput: (value: string) => void;
@@ -47,11 +49,11 @@ const modes: Array<{
 
 const SearchPanel = forwardRef<HTMLInputElement, SearchPanelProps>(function SearchPanel(
   {
-    language,
     input,
     mode,
     limit,
     loading,
+    cooldownSeconds,
     recent,
     t,
     onInput,
@@ -66,10 +68,14 @@ const SearchPanel = forwardRef<HTMLInputElement, SearchPanelProps>(function Sear
   return (
     <section className="search-zone" aria-label={t("search")}>
       <form className="search-instrument" onSubmit={onSubmit}>
+        <label className="search-label" htmlFor="player-search">
+          {t("playerLabel")}
+        </label>
         <div className="search-line">
           <Search size={21} aria-hidden="true" />
           <Input
             ref={ref}
+            id="player-search"
             aria-label={t("playerPlaceholder")}
             autoComplete="off"
             fullWidth
@@ -80,49 +86,78 @@ const SearchPanel = forwardRef<HTMLInputElement, SearchPanelProps>(function Sear
             onChange={(event) => onInput(event.target.value)}
           />
           <kbd className="search-shortcut">⌘ K</kbd>
-          <Button className="search-submit" isPending={loading} type="submit" variant="primary">
-            <Search size={18} aria-hidden="true" />
-            {loading ? t("searching") : t("search")}
+          <Button
+            className="search-submit"
+            isDisabled={!input.trim() || cooldownSeconds > 0}
+            isPending={loading}
+            type="submit"
+            variant="primary"
+          >
+            {loading ? (
+              <LoaderCircle className="spin" size={18} aria-hidden="true" />
+            ) : (
+              <Search size={18} aria-hidden="true" />
+            )}
+            {cooldownSeconds > 0
+              ? t("retryIn", { seconds: cooldownSeconds })
+              : loading
+                ? t("searching")
+                : t("search")}
           </Button>
         </div>
 
         <div className="search-options">
-          <fieldset className="mode-picker" aria-label={t("ruleset")}>
-            {modes.map(({ value, label, icon: Icon }) => (
-              <Button
-                key={value}
-                aria-pressed={mode === value}
-                className="mode-button"
-                size="sm"
-                variant={mode === value ? "secondary" : "ghost"}
-                onPress={() => onMode(value)}
-              >
-                <Icon size={14} aria-hidden="true" />
-                {label === "playerDefault" ? t("playerDefault") : label}
-              </Button>
-            ))}
+          <fieldset
+            className="mode-picker"
+            aria-label={t("ruleset")}
+            disabled={loading || cooldownSeconds > 0}
+          >
+            <legend>{t("ruleset")}</legend>
+            <div className="mode-buttons">
+              {modes.map(({ value, label, icon: Icon }) => (
+                <Button
+                  key={value}
+                  aria-pressed={mode === value}
+                  className="mode-button"
+                  size="sm"
+                  type="button"
+                  isDisabled={loading || cooldownSeconds > 0}
+                  variant={mode === value ? "secondary" : "ghost"}
+                  onPress={() => onMode(value)}
+                >
+                  <Icon size={14} aria-hidden="true" />
+                  {label === "playerDefault" ? t("playerDefault") : label}
+                </Button>
+              ))}
+            </div>
           </fieldset>
 
           <fieldset className="limit-picker" aria-label={t("bestCount")}>
-            <span>{t("bestCount")}</span>
-            {[20, 50].map((value) => (
-              <Button
-                key={value}
-                aria-pressed={limit === value}
-                className="limit-button"
-                size="sm"
-                variant={limit === value ? "secondary" : "ghost"}
-                onPress={() => onLimit(value as 20 | 50)}
-              >
-                B{value}
-              </Button>
-            ))}
+            <legend>{t("bestCount")}</legend>
+            <div className="limit-buttons" data-limit={limit}>
+              {[20, 50].map((value) => (
+                <Button
+                  key={value}
+                  aria-pressed={limit === value}
+                  className="limit-button"
+                  size="sm"
+                  type="button"
+                  variant={limit === value ? "secondary" : "ghost"}
+                  onPress={() => onLimit(value as 20 | 50)}
+                >
+                  B{value}
+                </Button>
+              ))}
+            </div>
           </fieldset>
         </div>
       </form>
 
       <div className="search-meta">
-        <span className="public-note">✓ {t("publicScores")}</span>
+        <span className="public-note">
+          <ShieldCheck size={14} aria-hidden="true" />
+          {t("publicScores")}
+        </span>
         {recent.length > 0 && (
           <div className="recent-row">
             <span>{t("recent")}</span>
@@ -131,6 +166,7 @@ const SearchPanel = forwardRef<HTMLInputElement, SearchPanelProps>(function Sear
                 key={player.id}
                 className="recent-player"
                 type="button"
+                disabled={loading || cooldownSeconds > 0}
                 onClick={() => onRecent(player)}
               >
                 {player.username}
@@ -142,9 +178,6 @@ const SearchPanel = forwardRef<HTMLInputElement, SearchPanelProps>(function Sear
           </div>
         )}
       </div>
-      <span className="language-hint" aria-hidden="true">
-        {language === "zh-CN" ? "B20 · B50" : "BEST 20 · BEST 50"}
-      </span>
     </section>
   );
 });

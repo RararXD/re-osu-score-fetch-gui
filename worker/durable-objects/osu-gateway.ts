@@ -22,14 +22,24 @@ import {
   fetchBestScores,
   UpstreamResponseError,
 } from "../services/osu-api";
+import { RequestBudget, type RequestBudgetSnapshot } from "../services/request-budget";
 
 const POOL_STORAGE_KEY = "oauth-pool-v1";
+const BUDGET_STORAGE_KEY = "upstream-budget-v1";
+const MAX_PENDING_QUERIES = 8;
+const MAX_QUEUE_WAIT_MS = 10_000;
 
 export class OsuGateway extends DurableObject<Env> {
   private tail: Promise<void> = Promise.resolve();
+  private pending = 0;
   private readonly tokens = new Map<number, AccessToken>();
 
   override async fetch(request: Request): Promise<Response> {
+    if (this.pending >= MAX_PENDING_QUERIES) {
+      return errorResponse(new ApiError(503, "UPSTREAM_BUSY", "查询队列已满，请稍后重试。", 5));
+    }
+    this.pending += 1;
+    const queuedAt = Date.now();
     const previous = this.tail;
     let release: () => void = () => undefined;
     this.tail = new Promise<void>((resolve) => {
@@ -37,8 +47,12 @@ export class OsuGateway extends DurableObject<Env> {
     });
     await previous;
     try {
+      if (Date.now() - queuedAt >= MAX_QUEUE_WAIT_MS) {
+        return errorResponse(new ApiError(503, "UPSTREAM_BUSY", "查询等待超时，请稍后重试。", 5));
+      }
       return await this.handle(request);
     } finally {
+      this.pending -= 1;
       release();
     }
   }
@@ -63,16 +77,21 @@ export class OsuGateway extends DurableObject<Env> {
       }
       const signature = credentialSignature(credentials);
       const snapshot = await this.ctx.storage.get<CredentialPoolSnapshot>(POOL_STORAGE_KEY);
-      const configuredLimit = Number(this.env.OSU_REQUESTS_PER_MINUTE ?? "60");
+      const configuredLimit = Number(this.env.OSU_REQUESTS_PER_MINUTE ?? "30");
       const requestsPerMinute = Number.isFinite(configuredLimit)
-        ? Math.max(3, Math.min(60, Math.trunc(configuredLimit)))
-        : 60;
+        ? Math.max(3, Math.min(30, Math.trunc(configuredLimit)))
+        : 30;
       const pool = new CredentialPool(credentials.length, requestsPerMinute, snapshot, signature);
+      const budget = new RequestBudget(
+        requestsPerMinute,
+        await this.ctx.storage.get<RequestBudgetSnapshot>(BUDGET_STORAGE_KEY),
+      );
       if (snapshot?.signature !== signature) this.tokens.clear();
 
       let shortestRetry = Number.POSITIVE_INFINITY;
       for (let attempt = 0; attempt < credentials.length; attempt += 1) {
         const now = Date.now();
+        this.checkBudget(budget, 1, now);
         const reservation = pool.reserve((slot) => {
           const token = this.tokens.get(slot);
           return token && token.expiresAt > now ? 2 : 3;
@@ -83,9 +102,11 @@ export class OsuGateway extends DurableObject<Env> {
         }
 
         const slot = reservation.slot;
+        const token = this.tokens.get(slot);
+        this.checkBudget(budget, token && token.expiresAt > now ? 2 : 3, now);
         await this.persistPool(pool, signature);
         try {
-          const data = await this.queryWithSlot(query, credentials[slot], slot);
+          const data = await this.queryWithSlot(query, credentials[slot], slot, budget);
           try {
             await writeScoreCache(this.env.SCORE_CACHE, query, data);
           } catch (error) {
@@ -112,11 +133,17 @@ export class OsuGateway extends DurableObject<Env> {
               throw new ApiError(404, "PLAYER_NOT_FOUND", "未找到该玩家，请检查用户名或 ID。");
             }
             if (error.status === 429) {
-              const retryAfter = error.retryAfter ?? 10;
+              const retryAfter = error.retryAfter ?? 60;
               pool.markCooldown(slot, Date.now() + retryAfter * 1000);
-              shortestRetry = Math.min(shortestRetry, retryAfter);
+              budget.coolDown(Date.now() + retryAfter * 1000);
+              await this.ctx.storage.put(BUDGET_STORAGE_KEY, budget.snapshot());
               await this.persistPool(pool, signature);
-              continue;
+              throw new ApiError(
+                503,
+                "UPSTREAM_BUSY",
+                "osu! API 正在冷却，请稍后重试。",
+                retryAfter,
+              );
             }
             if (error.phase === "oauth" && (error.status === 400 || error.status === 401)) {
               this.tokens.delete(slot);
@@ -156,13 +183,34 @@ export class OsuGateway extends DurableObject<Env> {
     query: ScoreQuery,
     credential: { clientId: string; clientSecret: string },
     slot: number,
+    budget: RequestBudget,
   ) {
+    const budgetedFetch: typeof fetch = async (input, init) => {
+      const now = Date.now();
+      this.checkBudget(budget, 1, now);
+      budget.record(now);
+      // Persist before sending: failures and restarts must not refund actual requests.
+      await this.ctx.storage.put(BUDGET_STORAGE_KEY, budget.snapshot());
+      return fetch(input, init);
+    };
     let token = this.tokens.get(slot);
     if (!token || token.expiresAt <= Date.now()) {
-      token = await fetchAccessToken(credential);
+      token = await fetchAccessToken(credential, budgetedFetch);
       this.tokens.set(slot, token);
     }
-    return fetchBestScores(query.player, query.mode, token.value);
+    return fetchBestScores(query.player, query.mode, token.value, budgetedFetch);
+  }
+
+  private checkBudget(budget: RequestBudget, required: number, now: number): void {
+    const retryAfter = budget.retryAfter(required, now);
+    if (retryAfter > 0) {
+      throw new ApiError(
+        503,
+        "UPSTREAM_BUSY",
+        "osu! API 请求额度暂时用尽，请稍后重试。",
+        retryAfter,
+      );
+    }
   }
 
   private async persistPool(pool: CredentialPool, signature: string): Promise<void> {

@@ -28,7 +28,11 @@ Outlined circles, squares, and triangles appear at randomized positions, sizes, 
 
 ## Motion
 
-The signature motion is the pink `osu!` word: it carries a soft white glow at rest, enlarges on hover, and answers with the original 1.2-second beat-like one-pixel lift. Background geometry uses slow 4.5–8-second glimmer pulses and changes position only while invisible. Search focus may answer with one restrained pulse. With `prefers-reduced-motion`, all elements render in their settled state and no essential status relies on motion.
+The signature motion is the pink `osu!` word: it carries a soft white glow at rest, enlarges on hover, and answers with the original 1.2-second beat-like one-pixel lift. Background geometry uses slow 4.5–8-second glimmer pulses and changes position only while invisible; offscreen shapes and hidden tabs pause these loops.
+
+Empty, loading, result and error views use interruptible 220ms content transitions. Mode, result-count and language changes keep their controls mounted, preserving focus and export progress. The B20/B50 selection moves over 180ms; ordinary control feedback takes 140ms. Loading uses structured skeletons and a labeled spinner; background refresh keeps existing results visible with a thin moving indicator. These indicators represent activity, never a fabricated completion percentage.
+
+With `prefers-reduced-motion`, spatial transitions, selection slides and looping indicators stop. Content changes retain a gentle 100ms opacity transition and controls retain brief color feedback. Loading text and selected states remain visible without motion.
 
 ## Structure
 

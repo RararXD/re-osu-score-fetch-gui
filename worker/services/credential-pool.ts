@@ -87,15 +87,14 @@ export class CredentialPool {
       const required =
         typeof requiredRequests === "function" ? requiredRequests(index) : requiredRequests;
       slot.requestTimes = slot.requestTimes.filter((time) => time > cutoff);
-      const blockedUntil = Math.max(slot.cooldownUntil, slot.disabledUntil);
-      if (blockedUntil > now) {
-        earliestAvailable = Math.min(earliestAvailable, blockedUntil);
-        continue;
-      }
+      let blockedUntil = Math.max(slot.cooldownUntil, slot.disabledUntil);
       if (slot.requestTimes.length + required > this.requestsPerMinute) {
         const releaseIndex = slot.requestTimes.length + required - this.requestsPerMinute - 1;
         const releaseAt = slot.requestTimes[Math.max(0, releaseIndex)] + 60_000;
-        earliestAvailable = Math.min(earliestAvailable, releaseAt);
+        blockedUntil = Math.max(blockedUntil, releaseAt);
+      }
+      if (blockedUntil > now) {
+        earliestAvailable = Math.min(earliestAvailable, blockedUntil);
         continue;
       }
 
